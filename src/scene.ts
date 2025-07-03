@@ -13,9 +13,9 @@ export type SceneSetup<P extends unknown[] = never> = (
 export class Scene<P extends unknown[]> {
   root = h('div');
   update: (...e: P) => void;
-  data: LooseObject = {};
+  data: Readonly<{ start_time: number }> & LooseObject = { start_time: 0 };
   #isShown = true;
-  #showPromiseWithResolvers: null | PromiseWithResolvers<void> = null;
+  #showPromiseWithResolvers?: PromiseWithResolvers<typeof this.data>;
   constructor(
     public app: App,
     setup: SceneSetup<P>,
@@ -48,7 +48,7 @@ export class Scene<P extends unknown[]> {
     }
     this.#isShown = false;
     this.root.style.transform = 'scale(0)';
-    this.#showPromiseWithResolvers?.resolve();
+    this.#showPromiseWithResolvers?.resolve(this.data);
   }
   show(...e: P) {
     if (this.#isShown) {
@@ -56,7 +56,7 @@ export class Scene<P extends unknown[]> {
     }
     this.#isShown = true;
     this.root.style.transform = 'scale(1)';
-    this.#showPromiseWithResolvers = Promise.withResolvers<void>();
+    this.#showPromiseWithResolvers = Promise.withResolvers();
     // update element
     this.update(...e);
     // render
@@ -82,6 +82,7 @@ export class Scene<P extends unknown[]> {
     };
     // it will be called after first frame and before second frame
     window.requestAnimationFrame((lastFrameTime) => {
+      //@ts-ignore
       this.data.start_time = lastFrameTime;
       onFrame(lastFrameTime);
     });

@@ -2,7 +2,12 @@ import { Scene, SceneConfig } from './scene';
 import { h } from './util';
 
 export class App {
-  data: LooseObject = {
+  data: Readonly<{
+    per_frame: number;
+    screen_wh: [number, number];
+    win_wh: [number, number];
+  }> &
+    LooseObject = {
     per_frame: 16.67,
     screen_wh: [window.screen.width, window.screen.height],
     win_wh: [window.innerWidth, window.innerHeight],
@@ -26,6 +31,13 @@ export class App {
         will-change: transform;
       }`);
     document.adoptedStyleSheets.push(sheet);
+    // add event listener to prevent page unload
+    window.addEventListener('beforeunload', (e) => {
+      //FIXME: Safari doesn't support this
+      e.preventDefault();
+      return (e.returnValue =
+        'Leaving the page will discard progress. Are you sure?');
+    });
   }
   /**create a new scene */
   scene<P extends unknown[]>(
@@ -192,6 +204,6 @@ export async function createApp(options?: {
     }),
   });
   root.removeChild(panel);
-  process.env.NODE_ENV === 'development' && console.log('app.data', app.data);
+  console.log('app.data', app.data);
   return app;
 }

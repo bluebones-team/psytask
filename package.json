@@ -13,6 +13,7 @@
     "@jspsych/plugin-html-button-response": "^2.1.0",
     "@jspsych/plugin-html-keyboard-response": "^2.1.0",
     "@types/bun": "^1.2.17",
+    "@types/wicg-file-system-access": "^2023.10.6",
     "jspsych": "^8.2.1",
     "puppeteer-core": "^24.11.1"
   }
