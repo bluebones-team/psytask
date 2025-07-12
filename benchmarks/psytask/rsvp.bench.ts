@@ -1,6 +1,6 @@
 import { createApp } from '~/app';
 
-const app = await createApp();
+using app = await createApp(); // FIXME: use tsc to compile
 const fixation = app.fixation({ duration: 5e2 });
 const letter = app.text('', { duration: 1e2 });
 

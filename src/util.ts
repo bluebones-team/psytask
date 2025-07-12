@@ -32,6 +32,9 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   }
   return el;
 }
+export function pipe<T>(...fns: ((v: T) => T)[]) {
+  return (v: T) => fns.reduce((acc, fn) => fn(acc), v);
+}
 // stat
 export function mean_std(arr: number[]) {
   const n = arr.length;
