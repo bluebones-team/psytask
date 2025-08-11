@@ -1,26 +1,33 @@
 import type { LooseObject } from '../types';
 import type { App } from './app';
-import { DisposableClass, h, promiseWithResolvers } from './util';
+import { _Disposable, h, promiseWithResolvers } from './util';
 
+type SceneCloseOn = `mouse:${'left' | 'middle' | 'right'}` | `key:${string}`;
 export type SceneOptions = {
   /** Milliseconds */
   duration?: number;
-  close_on?: keyof HTMLElementEventMap | (keyof HTMLElementEventMap)[];
+  /**
+   * All keys:
+   * [MDN](https://developer.mozilla.org/docs/Web/API/UI_Events/Keyboard_event_key_values)
+   */
+  close_on?: SceneCloseOn | SceneCloseOn[];
   on_frame?: (lastFrameTime: number) => void;
 };
-export type SceneSetup<P extends unknown[] = never> = (
+
+export type SceneSetup<T extends {} = any> = (
   /** This scene */
   self: Scene<never>,
-) => (...e: P) => void;
+) => (props: T) => void;
+export type SceneProps<F> = F extends SceneSetup<infer P> ? P : never;
 
-export class Scene<P extends unknown[]> extends DisposableClass {
+export class Scene<T extends {}> extends _Disposable {
   /** Root element of the scene */
   root = h('div');
   /** Show generated data */
   data: Readonly<{ start_time: number; frame_times: number[] }> & LooseObject =
     { start_time: 0, frame_times: [] };
-  update: (...e: P) => void;
-  #isShown = true;
+  update: (props: T) => void;
+  #shown = true;
   #showPromiseWithResolvers?: ReturnType<
     typeof promiseWithResolvers<typeof this.data>
   >;
@@ -31,27 +38,45 @@ export class Scene<P extends unknown[]> extends DisposableClass {
      *
      * @returns Update function to update the scene each show
      */
-    setup: SceneSetup<P>,
+    setup: SceneSetup<T>,
+    private defaultProps: T,
     public options: SceneOptions = {},
   ) {
     super();
 
     // initialize
-    this.close();
-    this.update = setup(this);
     this.addCleanup(() => this.app.root.removeChild(this.root));
+    this.close();
+
+    //@ts-ignore
+    this.update = setup(this);
+    this.update(defaultProps);
+    if (process.env.NODE_ENV === 'development' && this.#shown) {
+      throw new Error("Scene shouldn't be shown in setup or update function");
+    }
 
     // add close event listener
-    const closeKeys =
-      typeof options.close_on === 'undefined'
-        ? []
-        : typeof options.close_on === 'string'
-          ? [options.close_on]
-          : options.close_on;
-    const closeFn = this.close.bind(this);
-    for (const key of closeKeys) {
-      //@ts-ignore
-      this.useEventListener(this.root, key, closeFn);
+    if (typeof options.close_on !== 'undefined') {
+      const close_ons = Array.isArray(options.close_on)
+        ? options.close_on
+        : [options.close_on];
+      for (const close_on of close_ons) {
+        const [type, key] = close_on.split(':');
+        if (type === 'mouse') {
+          this.useEventListener(this.root, 'click', (e) => {
+            if (
+              (e.button === 0 && key === 'left') ||
+              (e.button === 1 && key === 'middle') ||
+              (e.button === 2 && key === 'right')
+            )
+              this.close();
+          });
+        } else if (type === 'key') {
+          this.useEventListener(this.root, 'keydown', (e) => {
+            if (e.key === key) this.close();
+          });
+        }
+      }
     }
   }
   /** Override config */
@@ -60,25 +85,25 @@ export class Scene<P extends unknown[]> extends DisposableClass {
     return this;
   }
   close() {
-    if (!this.#isShown) {
+    if (!this.#shown) {
       console.warn('Scene is already closed');
       return;
     }
-    this.#isShown = false;
+    this.#shown = false;
     this.root.style.transform = 'scale(0)';
     this.#showPromiseWithResolvers?.resolve(this.data);
   }
   /** Show the scene with parameters */
-  show(...e: P) {
-    if (this.#isShown) {
+  show(props?: Partial<T>) {
+    if (this.#shown) {
       console.warn('Scene is already shown');
-      return this.data;
+      return this.#showPromiseWithResolvers!.promise;
     }
-    this.#isShown = true;
+    this.#shown = true;
     this.root.style.transform = 'scale(1)';
     this.#showPromiseWithResolvers = promiseWithResolvers();
 
-    this.update(...e);
+    this.update({ ...this.defaultProps, ...props });
 
     const frame_ms = this.app.data.frame_ms;
     const duration = this.options.duration;
@@ -133,11 +158,8 @@ export class Scene<P extends unknown[]> extends DisposableClass {
     const onFrame = (lastFrameTime: number) => {
       this.data.frame_times.push(lastFrameTime);
 
-      if (typeof this.options.duration !== 'undefined') {
-        if (
-          lastFrameTime - this.data.start_time >=
-          this.options.duration - frame_ms * 1.5
-        ) {
+      if (typeof duration !== 'undefined') {
+        if (lastFrameTime - this.data.start_time >= duration - frame_ms * 1.5) {
           // console.log(
           //     'frame durations',
           //     this.data.frame_times.reduce(

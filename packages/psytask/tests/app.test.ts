@@ -38,7 +38,7 @@ beforeEach(() => {
   };
 
   // Mock getComputedStyle
-  globalThis.getComputedStyle = (element: Element) =>
+  const mockComputedStyle = (element: Element) =>
     ({
       getPropertyValue: (property: string) => {
         if (property === '--psytask') {
@@ -47,6 +47,9 @@ beforeEach(() => {
         return '';
       },
     }) as CSSStyleDeclaration;
+  globalThis.getComputedStyle = mockComputedStyle as any;
+  // Important: App uses window.getComputedStyle
+  (window as any).getComputedStyle = mockComputedStyle as any;
 
   // Setup basic HTML structure
   document.documentElement.innerHTML = `
@@ -178,6 +181,8 @@ describe('App', () => {
       expect(scene.root.classList.contains('psytask-scene')).toBe(true);
       expect(root.children).toContain(scene.root);
       expect(scene.root.textContent).toBe('test scene');
+      // Initially closed by constructor
+      expect(scene.root.style.transform).toBe('scale(0)');
     });
 
     it('should pass parameters to scene setup function', () => {
@@ -226,11 +231,11 @@ describe('App', () => {
       const app = new App(root, mockEnvData);
 
       const scene = app.text('Hello');
-      // Don't call show() as it will timeout, just test the update function
+      // Call show() synchronously to trigger the updater
 
       const paragraph = scene.root.querySelector('p')!;
 
-      scene.update({ text: 'Modified', size: '24px', color: 'red' });
+      scene.show({ children: 'Modified', size: '24px', color: 'red' });
 
       expect(paragraph.textContent).toBe('Modified');
       expect(paragraph.style.fontSize).toBe('24px');
@@ -327,19 +332,22 @@ describe('App', () => {
       const paragraph = scene.root.querySelector('p')!;
 
       // Test updating only text
-      scene.update({ text: 'New Text' });
+      scene.show({ children: 'New Text' });
       expect(paragraph.textContent).toBe('New Text');
 
       // Test updating only size
-      scene.update({ size: '18px' });
+      scene.close();
+      scene.show({ size: '18px' });
       expect(paragraph.style.fontSize).toBe('18px');
 
       // Test updating only color
-      scene.update({ color: 'blue' });
+      scene.close();
+      scene.show({ color: 'blue' });
       expect(paragraph.style.color).toBe('blue');
 
       // Test updating with undefined properties
-      scene.update({});
+      scene.close();
+      scene.show({});
       expect(paragraph.textContent).toBe('New Text'); // Should remain unchanged
     });
 

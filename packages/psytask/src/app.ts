@@ -1,9 +1,8 @@
-import { type PluginInfo, type TrialType } from 'jspsych';
-import { createSceneByJsPsychPlugin } from './jspsych';
-import { Scene, type SceneOptions } from './scene';
-import { detectEnvironment, DisposableClass, h } from './util';
+import { Scene, type SceneOptions, type SceneProps } from './scene';
+import { textSetup } from './scenes';
+import { _Disposable, detectEnvironment, h } from './util';
 
-export class App extends DisposableClass {
+export class App extends _Disposable {
   constructor(
     /** Root element of the app */
     public root: Element,
@@ -14,11 +13,8 @@ export class App extends DisposableClass {
 
     // check styles
     if (
-      window
-        .getComputedStyle(document.documentElement)
-        .getPropertyValue('--psytask') === ''
+      window.getComputedStyle(this.root).getPropertyValue('--psytask') === ''
     ) {
-      // TODO: auto import psytask CSS file
       throw new Error('Please import psytask CSS file in your HTML file');
     }
 
@@ -38,9 +34,58 @@ export class App extends DisposableClass {
       }
     });
   }
+  /** Load resources to RAM */
+  async load(urls: string[]) {
+    const container = this.root.appendChild(
+      h('div', {
+        style: {
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+        },
+      }),
+    );
+
+    const tasks = urls.map(async (url) => {
+      const el = container.appendChild(h('p', { title: url }));
+
+      const res = await fetch(url);
+      if (res.body == null) {
+        el.style.color = 'red';
+        el.textContent = `Failed to load`;
+        throw new Error(el.textContent + ': ' + url);
+      }
+
+      // no progress
+      const totalStr = res.headers.get('Content-Length');
+      if (totalStr == null) {
+        el.textContent = `Loading...`;
+        return res.blob();
+      }
+      const total = +totalStr;
+
+      // show progress
+      const reader = res.body.getReader();
+      const chunks = [];
+      for (let loaded = 0; ; ) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        loaded += value.length;
+        el.textContent = `Loading...` + ((loaded / total) * 100).toFixed(2);
+        chunks.push(value);
+      }
+
+      return new Blob(chunks);
+    });
+
+    const datas = await Promise.all(tasks);
+    this.root.removeChild(container);
+    return datas;
+  }
   /** Create a scene */
-  scene<P extends unknown[]>(
-    ...e: ConstructorParameters<typeof Scene<P>> extends [infer L, ...infer R]
+  scene<T extends {}>(
+    ...e: ConstructorParameters<typeof Scene<T>> extends [infer L, ...infer R]
       ? R
       : never
   ) {
@@ -50,50 +95,11 @@ export class App extends DisposableClass {
     return scene;
   }
   /** Shortcut to create a text scene */
-  text(text: string, options?: SceneOptions) {
-    return this.scene(function (self) {
-      const el = h('p', { textContent: text });
-      self.root.appendChild(
-        h('div', { style: { textAlign: 'center', lineHeight: '100dvh' } }, el),
-      );
-      return (
-        props?: Partial<{ text: string; size: string; color: string }>,
-      ) => {
-        const p = { ...props };
-        if (p.text) {
-          el.textContent = p.text;
-        }
-        if (p.size) {
-          el.style.fontSize = p.size;
-        }
-        if (p.color) {
-          el.style.color = p.color;
-        }
-      };
-    }, options);
-  }
-  /** Shortcut to create a fixation scene */
-  fixation(options?: SceneOptions) {
-    return this.text('+', options);
-  }
-  /** Shortcut to create a blank scene */
-  blank(options?: SceneOptions) {
-    return this.text('', options);
-  }
-  /**
-   * Create a scene with jsPsych Plugin
-   *
-   * @example
-   *   const scene = app.jsPsych({
-   *     type: jsPsychHtmlKeyboardResponse,
-   *     stimulus: 'Hello world',
-   *     choices: ['f', 'j'],
-   *   });
-   *
-   * @see https://www.jspsych.org/latest/plugins/
-   */
-  jsPsych<I extends PluginInfo>(trial: TrialType<I>) {
-    return createSceneByJsPsychPlugin(this, trial);
+  text(props: string | SceneProps<typeof textSetup>, options?: SceneOptions) {
+    if (typeof props === 'string') {
+      props = { children: props };
+    }
+    return this.scene(textSetup, props, options);
   }
 }
 /**
@@ -101,9 +107,9 @@ export class App extends DisposableClass {
  *
  * @example
  *   using app = await createApp();
- *   using fixation = app.fixation({ duration: 500 });
- *   using blank = app.blank({ duration: 1000 });
- *   using guide = app.text('This is a guide', { close_on: 'click' });
+ *   using fixation = app.text('+', { duration: 500 });
+ *   using blank = app.text('', { duration: 1000 });
+ *   using guide = app.text('Welcome to the task!', { close_on: 'key: ' });
  */
 export async function createApp(
   options?: Parameters<typeof detectEnvironment>[0],

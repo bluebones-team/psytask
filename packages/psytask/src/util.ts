@@ -5,11 +5,13 @@ import type { EventType, Merge } from '../types';
 /** Creates a new HTML element quickly and easily */
 export function h<K extends keyof HTMLElementTagNameMap>(
   tagName: K,
-  props?: Partial<Merge<HTMLElementTagNameMap[K], { style?: CSSProperties }>>,
-  children?: Node | string | (Node | string)[],
+  props?: Partial<
+    Merge<HTMLElementTagNameMap[K], { style?: CSSProperties }>
+  > | null,
+  children?: Node | string | (Node | string)[] | null,
 ) {
   const el = document.createElement(tagName);
-  if (typeof props !== 'undefined') {
+  if (props != null) {
     for (const key in props) {
       if (hasOwn(props, key)) {
         if (key === 'style') {
@@ -25,12 +27,13 @@ export function h<K extends keyof HTMLElementTagNameMap>(
       }
     }
   }
-  if (typeof children !== 'undefined') {
-    if (typeof children === 'string') {
-      el.textContent = children;
-    } else if (Array.isArray(children)) {
+  if (children != null) {
+    if (Array.isArray(children)) {
       el.append(...children);
     } else {
+      if (typeof children === 'string') {
+        children = document.createTextNode(children);
+      }
       el.appendChild(children);
     }
   }
@@ -42,7 +45,9 @@ export function pipe<T>(...fns: ((v: T) => T)[]) {
 export function hasOwn<T, K extends PropertyKey>(
   obj: T,
   key: K,
-): obj is K extends keyof T ? T : T & { [P in K]: unknown } {
+): obj is { [P in K]: any } extends T
+  ? Extract<T, { [P in K]: unknown }>
+  : T & { [P in K]: unknown } {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 export const promiseWithResolvers = (
@@ -61,19 +66,6 @@ export const promiseWithResolvers = (
   resolve: (value: T | PromiseLike<T>) => void;
   reject: (reason?: any) => void;
 };
-export function proxy<T extends object>(
-  obj: T,
-  opts: {
-    onNoKey?: (key: PropertyKey) => void;
-  },
-) {
-  return new Proxy(obj, {
-    get(o, k) {
-      if (hasOwn(o, k)) return o[k as keyof T];
-      opts.onNoKey?.(k);
-    },
-  });
-}
 
 //@ts-ignore
 Symbol.dispose ??= Symbol.for('Symbol.dispose');
@@ -82,7 +74,7 @@ Symbol.dispose ??= Symbol.for('Symbol.dispose');
  *
  * @see https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-2.html
  */
-export class DisposableClass implements Disposable {
+export class _Disposable implements Disposable {
   #cleanups: (() => void)[] = [];
   [Symbol.dispose]() {
     for (const task of this.#cleanups) task();
@@ -197,9 +189,15 @@ export async function detectEnvironment(options?: {
     browser: browser.name + '/' + browser.version,
     mobile: /Mobi/i.test(ua),
     'in-app': /wv|in-app/i.test(ua), // webview or in-app browser
-    screen_wh: [window.screen.width, window.screen.height],
+    screen_wh: [window.screen.width, window.screen.height] as [
+      width: number,
+      height: number,
+    ],
     window_wh: (function () {
-      const wh = [window.innerWidth, window.innerHeight];
+      const wh: [width: number, height: number] = [
+        window.innerWidth,
+        window.innerHeight,
+      ];
       window.addEventListener('resize', () => {
         wh[0] = window.innerWidth;
         wh[1] = window.innerHeight;
@@ -213,3 +211,7 @@ export async function detectEnvironment(options?: {
   console.log('env', env);
   return env;
 }
+
+// math
+export const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value));

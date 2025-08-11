@@ -2,6 +2,7 @@
 export type LooseObject = { [key: string]: any };
 export type Primitive = string | number | boolean | null | undefined;
 export type Data = { [key: string]: Primitive };
+export type RGB255 = [number, number, number];
 
 // tools
 export type Merge<T, U> = Omit<T, Extract<keyof T, keyof U>> & U;

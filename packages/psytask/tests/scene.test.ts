@@ -37,8 +37,8 @@ beforeEach(() => {
     return 1;
   };
 
-  // Mock getComputedStyle
-  globalThis.getComputedStyle = (element: Element) =>
+  // Mock getComputedStyle (both global and window)
+  const mockComputedStyle = (element: Element) =>
     ({
       getPropertyValue: (property: string) => {
         if (property === '--psytask') {
@@ -47,6 +47,8 @@ beforeEach(() => {
         return '';
       },
     }) as any;
+  globalThis.getComputedStyle = mockComputedStyle as any;
+  (window as any).getComputedStyle = mockComputedStyle as any;
 
   // Setup basic HTML structure
   document.documentElement.innerHTML = `
@@ -104,7 +106,8 @@ describe('Scene', () => {
       expect(scene.root).toBeInstanceOf(window.Element);
       expect(scene.root.tagName).toBe('DIV');
       expect(scene.data.start_time).toBe(0);
-      expect(typeof scene.update).toBe('function');
+      // show() should be available to drive updates
+      expect(typeof scene.show).toBe('function');
     });
 
     it('should accept options parameter', () => {
@@ -186,7 +189,8 @@ describe('Scene', () => {
       const scene = new Scene(mockApp, setupSpy);
 
       expect(setupSpy).toHaveBeenCalledWith(scene);
-      expect(typeof scene.update).toBe('function');
+      scene.show();
+      expect(scene.root.textContent).toBe('updated');
     });
 
     it('should initialize scene as closed', () => {
@@ -310,19 +314,21 @@ describe('Scene', () => {
       expect(result).toBe(scene.data);
     });
 
-    it('should warn about short duration', () => {
+    it('should warn when duration is not a multiple of frame_ms (development only)', () => {
+      process.env.NODE_ENV = 'development';
       const consoleSpy = spyOn(console, 'warn');
       const setup: SceneSetup<[]> = () => () => {};
-      const scene = new Scene(mockApp, setup, { duration: 10 }); // Less than frame_ms (16.67)
+      const scene = new Scene(mockApp, setup, { duration: 10 }); // Not a multiple of 16.67
 
       scene.show();
 
       expect(consoleSpy).toHaveBeenCalledWith(
-        'Scene duration is shorter than frame_ms, it will show 1 frame',
+        expect.stringContaining('Scene duration is not a multiple of frame_ms'),
       );
     });
 
-    it('should not warn about normal duration', () => {
+    it('should not warn when duration aligns with frame multiples (error < 1ms)', () => {
+      process.env.NODE_ENV = 'development';
       const consoleSpy = spyOn(console, 'warn');
       const setup: SceneSetup<[]> = () => () => {};
       const scene = new Scene(mockApp, setup, { duration: 1000 });
@@ -330,7 +336,7 @@ describe('Scene', () => {
       scene.show();
 
       expect(consoleSpy).not.toHaveBeenCalledWith(
-        expect.stringContaining('Scene duration is shorter than frame_ms'),
+        expect.stringContaining('Scene duration is not a multiple of frame_ms'),
       );
     });
 
@@ -446,7 +452,7 @@ describe('Scene', () => {
       };
       const scene = new Scene(mockApp, setup);
 
-      scene.update();
+      scene.show();
 
       expect(scene.data.start_time).toBe(0);
       expect((scene.data as any).custom).toBe('value');
@@ -596,11 +602,15 @@ describe('Scene', () => {
       expect(scene.root.style.transform).toBe('scale(0)');
     });
 
-    it('should handle update function with no parameters', () => {
+    it('should handle show with no parameters', async () => {
       const setup: SceneSetup<[]> = () => () => {};
       const scene = new Scene(mockApp, setup);
 
-      expect(() => scene.update()).not.toThrow();
+      scene.show();
+      // Wait a moment to let RAF start, then close
+      await new Promise((r) => setTimeout(r, 20));
+      scene.close();
+      expect(scene.root.style.transform).toBe('scale(0)');
     });
   });
 

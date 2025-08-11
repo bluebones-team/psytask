@@ -1,5 +1,5 @@
 import type { Data } from '../types';
-import { DisposableClass, h } from './util';
+import { _Disposable, h } from './util';
 
 // stringifiers
 export abstract class DataStringifier {
@@ -51,7 +51,7 @@ export class JSONStringifier extends DataStringifier {
  *   await dc.add({ name: 'Bob', age: 30 });
  *   await dc.save();
  */
-export class DataCollector<T extends Data> extends DisposableClass {
+export class DataCollector<T extends Data> extends _Disposable {
   /**
    * A map of stringifier classes by file extension
    *
