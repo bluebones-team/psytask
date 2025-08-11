@@ -1,5 +1,5 @@
 import type { Data } from '../types';
-import { DisposableClass, h } from './util';
+import { _Disposable, h, on } from './util';
 
 // stringifiers
 export abstract class DataStringifier {
@@ -51,7 +51,7 @@ export class JSONStringifier extends DataStringifier {
  *   await dc.add({ name: 'Bob', age: 30 });
  *   await dc.save();
  */
-export class DataCollector<T extends Data> extends DisposableClass {
+export class DataCollector<T extends Data> extends _Disposable {
   /**
    * A map of stringifier classes by file extension
    *
@@ -78,9 +78,9 @@ export class DataCollector<T extends Data> extends DisposableClass {
     csv: CSVStringifier,
     json: JSONStringifier,
   };
-  rows: T[] = [];
   #saved = false;
-  stringifier: DataStringifier;
+  readonly rows: T[] = [];
+  readonly stringifier: DataStringifier;
   fileStream?: FileSystemWritableFileStream;
   /**
    * @param filename Pure filename with extension, not path. Default is
@@ -88,10 +88,11 @@ export class DataCollector<T extends Data> extends DisposableClass {
    * @param stringifier Using for data transformation.
    */
   constructor(
-    public filename = `data-${Date.now()}.csv`,
+    public readonly filename = `data-${Date.now()}.csv`,
     stringifier?: DataStringifier,
   ) {
     super();
+
     // set stringifier
     const match = filename.match(/\.([^\.]+)$/);
     const defaultExt = 'csv';
@@ -114,14 +115,18 @@ export class DataCollector<T extends Data> extends DisposableClass {
         this.stringifier = new DataCollector.stringifiers[defaultExt]!();
       }
     }
+
     // backup when the page is hidden
-    this.useEventListener(document, 'visibilitychange', () => {
-      if (document.visibilityState === 'hidden' && !this.fileStream) {
-        this.backup();
-      }
-    });
-    // TODO: save data on dispose
-    // this.addCleanup(() => this.save());
+    this.addCleanup(
+      on(document, 'visibilitychange', () => {
+        if (document.visibilityState === 'hidden' && !this.fileStream) {
+          this.backup();
+        }
+      }),
+    );
+
+    // save data on dispose
+    this.addCleanup(() => this.save());
   }
   /**
    * Some browser do not support this feature, such as Safari and Firefox. See
@@ -161,21 +166,24 @@ export class DataCollector<T extends Data> extends DisposableClass {
     return this;
   }
   async add(row: T) {
+    console.log('data', row);
     this.rows.push(row);
     const chunk = this.stringifier.transform(row);
     await this.fileStream?.write(chunk);
     return chunk;
   }
   /** Download current data to disk */
-  backup(suffix = '.backup') {
+  backup(suffix = `-${Date.now()}.backup`) {
+    if (this.rows.length === 0) return;
+
     const url = URL.createObjectURL(
       new Blob([this.stringifier.value], { type: 'text/plain' }),
     );
     const el = h('a', { download: this.filename + suffix, href: url });
     document.body.appendChild(el);
     el.click();
-    document.body.removeChild(el);
     URL.revokeObjectURL(url);
+    document.body.removeChild(el);
   }
   /** Write final data to disk */
   async save() {

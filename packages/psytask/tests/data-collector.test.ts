@@ -14,6 +14,7 @@ import {
   CSVStringifier,
   JSONStringifier,
 } from '../src/data-collector';
+import type { Data } from '../types';
 
 // Setup DOM environment
 const window = new Window();
@@ -532,7 +533,7 @@ describe('DataCollector', () => {
     });
   });
 
-  describe('DisposableClass integration', () => {
+  describe('_Disposable integration', () => {
     it('should cleanup event listeners on dispose', () => {
       const removeEventListenerSpy = spyOn(document, 'removeEventListener');
       const collector = new DataCollector();

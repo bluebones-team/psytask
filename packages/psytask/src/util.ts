@@ -1,15 +1,16 @@
 import type { Properties as CSSProperties } from 'csstype';
-import { detect } from 'detect-browser';
-import type { EventType, Merge } from '../types';
+import type { EventType, LooseObject, Merge } from '../types';
 
 /** Creates a new HTML element quickly and easily */
 export function h<K extends keyof HTMLElementTagNameMap>(
   tagName: K,
-  props?: Partial<Merge<HTMLElementTagNameMap[K], { style?: CSSProperties }>>,
-  children?: Node | string | (Node | string)[],
+  props?: Partial<
+    Merge<HTMLElementTagNameMap[K], { style?: CSSProperties }>
+  > | null,
+  children?: Node | string | (Node | string)[] | null,
 ) {
   const el = document.createElement(tagName);
-  if (typeof props !== 'undefined') {
+  if (props != null) {
     for (const key in props) {
       if (hasOwn(props, key)) {
         if (key === 'style') {
@@ -25,25 +26,36 @@ export function h<K extends keyof HTMLElementTagNameMap>(
       }
     }
   }
-  if (typeof children !== 'undefined') {
-    if (typeof children === 'string') {
-      el.textContent = children;
-    } else if (Array.isArray(children)) {
+  if (children != null) {
+    if (Array.isArray(children)) {
       el.append(...children);
     } else {
+      if (typeof children === 'string') {
+        children = document.createTextNode(children);
+      }
       el.appendChild(children);
     }
   }
   return el;
 }
-export function pipe<T>(...fns: ((v: T) => T)[]) {
-  return (v: T) => fns.reduce((acc, fn) => fn(acc), v);
-}
-export function hasOwn<T, K extends PropertyKey>(
+export function hasOwn<T extends LooseObject, K extends PropertyKey>(
   obj: T,
   key: K,
-): obj is K extends keyof T ? T : T & { [P in K]: unknown } {
+): obj is Extract<T, { [P in K]: unknown }> extends never
+  ? T & { [P in K]: unknown }
+  : Extract<T, { [P in K]: unknown }> {
   return Object.prototype.hasOwnProperty.call(obj, key);
+}
+export function proxyNonKey<T extends object>(
+  obj: T,
+  onNoKey: (key: PropertyKey) => void,
+) {
+  return new Proxy(obj, {
+    get(o, k) {
+      if (hasOwn(o, k)) return o[k as keyof T];
+      return onNoKey(k);
+    },
+  });
 }
 export const promiseWithResolvers = (
   hasOwn(Promise, 'withResolvers') &&
@@ -61,18 +73,21 @@ export const promiseWithResolvers = (
   resolve: (value: T | PromiseLike<T>) => void;
   reject: (reason?: any) => void;
 };
-export function proxy<T extends object>(
-  obj: T,
-  opts: {
-    onNoKey?: (key: PropertyKey) => void;
-  },
+/**
+ * Add event listener and return cleanup function
+ *
+ * @example
+ *   const cleanup = on(window, 'resize', (e) => {});
+ */
+export function on<T extends EventTarget, K extends EventType<T>>(
+  target: T,
+  type: K,
+  //@ts-ignore
+  listener: (ev: Parameters<T[`on${K}`]>[0]) => void,
+  options?: boolean | AddEventListenerOptions,
 ) {
-  return new Proxy(obj, {
-    get(o, k) {
-      if (hasOwn(o, k)) return o[k as keyof T];
-      opts.onNoKey?.(k);
-    },
-  });
+  target.addEventListener(type, listener, options);
+  return () => target.removeEventListener(type, listener, options);
 }
 
 //@ts-ignore
@@ -82,37 +97,19 @@ Symbol.dispose ??= Symbol.for('Symbol.dispose');
  *
  * @see https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-2.html
  */
-export class DisposableClass implements Disposable {
+export class _Disposable implements Disposable {
   #cleanups: (() => void)[] = [];
   [Symbol.dispose]() {
-    for (const task of this.#cleanups) task();
+    for (const task of [...this.#cleanups]) task();
     this.#cleanups.length = 0;
   }
   /** Add a cleanup function to be called on dispose */
   addCleanup(cleanup: () => void) {
     this.#cleanups.push(cleanup);
   }
-  /**
-   * Add disposable event listener
-   *
-   * @example
-   *   this.useEventListener(window, 'resize', (e) => {
-   *     console.log('Window resized', e);
-   *   });
-   */
-  useEventListener<T extends EventTarget, K extends EventType<T>>(
-    target: T,
-    type: K,
-    //@ts-ignore
-    listener: (ev: Parameters<T[`on${K}`]>[0]) => void,
-    options?: boolean | AddEventListenerOptions,
-  ) {
-    target.addEventListener(type, listener, options);
-    this.addCleanup(() => target.removeEventListener(type, listener, options));
-  }
 }
 
-// stat
+// tools
 export function mean_std(arr: number[]) {
   const n = arr.length;
   const mean = arr.reduce((acc, v) => acc + v) / n;
@@ -121,8 +118,6 @@ export function mean_std(arr: number[]) {
   );
   return { mean, std };
 }
-
-// detect environment
 export function detectFPS(opts: { root: Element; framesCount: number }) {
   function checkPageVisibility() {
     if (document.visibilityState === 'hidden') {
@@ -175,41 +170,7 @@ export function detectFPS(opts: { root: Element; framesCount: number }) {
     });
   });
 }
-export async function detectEnvironment(options?: {
-  /** The detection panel container */
-  root?: Element;
-  /** Count of frames to calculate perFrame milliseconds */
-  framesCount?: number;
-}) {
-  const opts = { root: document.body, framesCount: 60, ...options };
-  const panel = opts.root.appendChild(
-    h('div', { style: { textAlign: 'center', lineHeight: '100dvh' } }),
-  );
 
-  const ua = navigator.userAgent;
-  const browser = detect(ua);
-  if (!browser) {
-    throw new Error('Cannot detect browser environment');
-  }
-  const env = {
-    ua,
-    os: browser.os,
-    browser: browser.name + '/' + browser.version,
-    mobile: /Mobi/i.test(ua),
-    'in-app': /wv|in-app/i.test(ua), // webview or in-app browser
-    screen_wh: [window.screen.width, window.screen.height],
-    window_wh: (function () {
-      const wh = [window.innerWidth, window.innerHeight];
-      window.addEventListener('resize', () => {
-        wh[0] = window.innerWidth;
-        wh[1] = window.innerHeight;
-      });
-      return wh;
-    })(),
-    frame_ms: await detectFPS({ root: panel, framesCount: opts.framesCount }),
-  } as const;
-
-  opts.root.removeChild(panel);
-  console.log('env', env);
-  return env;
-}
+// math
+export const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value));

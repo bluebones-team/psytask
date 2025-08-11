@@ -1,89 +1,164 @@
-import type { LooseObject } from '../types';
+import type { LooseObject, Merge } from '../types';
 import type { App } from './app';
-import { DisposableClass, h, promiseWithResolvers } from './util';
+import { reactive, type Reactive } from './reactive';
+import { _Disposable, h, on, promiseWithResolvers } from './util';
 
-export type SceneOptions = {
-  /** Milliseconds */
-  duration?: number;
-  close_on?: keyof HTMLElementEventMap | (keyof HTMLElementEventMap)[];
-  on_frame?: (lastFrameTime: number) => void;
-};
-export type SceneSetup<P extends unknown[] = never> = (
-  /** This scene */
+const createShowInfo = () => ({ start_time: 0, frame_times: [] as number[] });
+type SceneShowInfo = ReturnType<typeof createShowInfo>;
+type ForbiddenSceneData = { [K in keyof SceneShowInfo]?: never };
+
+export type SceneSetup<
+  P extends LooseObject = any,
+  D extends LooseObject = LooseObject & ForbiddenSceneData,
+> = (
+  props: Reactive<P>,
   self: Scene<never>,
-) => (...e: P) => void;
+) => { element: HTMLElement | HTMLElement[]; data?: () => D };
+type SceneShow<
+  P extends LooseObject = any,
+  D extends LooseObject = LooseObject,
+> = (patchProps?: Partial<P>) => Promise<Merge<D, SceneShowInfo>>;
+export type SceneFunction = SceneSetup | SceneShow;
 
-export class Scene<P extends unknown[]> extends DisposableClass {
-  /** Root element of the scene */
-  root = h('div');
-  /** Show generated data */
-  data: Readonly<{ start_time: number; frame_times: number[] }> & LooseObject =
-    { start_time: 0, frame_times: [] };
-  update: (...e: P) => void;
-  #isShown = true;
-  #showPromiseWithResolvers?: ReturnType<
-    typeof promiseWithResolvers<typeof this.data>
-  >;
+type SceneEventMap = {
+  'scene:show': null;
+  'scene:frame': number;
+  'scene:close': null;
+} & {
+  [K in `mouse:${'left' | 'middle' | 'right' | 'unknown'}`]: MouseEvent;
+} & { [K in `key:${string}`]: KeyboardEvent } & HTMLElementEventMap;
+type SceneEventType = keyof SceneEventMap;
+export type SceneOptions<T extends SceneFunction> = {
+  defaultProps: T extends SceneSetup<infer P> ? P : LooseObject;
+  /** @unit ms */
+  duration?: number;
+  /**
+   * All keys:
+   * [MDN](https://developer.mozilla.org/docs/Web/API/UI_Events/Keyboard_event_key_values)
+   */
+  close_on?: SceneEventType | SceneEventType[];
+  /** Whether to log frame times */
+  frame_times?: boolean;
+};
+
+const buttonTypeMap = ['mouse:left', 'mouse:middle', 'mouse:right'] as const;
+/** Just for type infer, do nothing in runtime. */
+const setup2show: {
+  <P extends LooseObject, D extends LooseObject & ForbiddenSceneData = {}>(
+    f: SceneSetup<P, D>,
+  ): SceneShow<P, D>;
+} = (f) => f as any;
+export { setup2show as generic };
+export class Scene<T extends SceneFunction> extends _Disposable {
+  /** Root element */
+  readonly root = h('div', {
+    className: 'psytask-scene',
+    tabIndex: -1, // support keyboard events
+    oncontextmenu: (e) => e.preventDefault(),
+  });
+  /** Show params */
+  readonly props: Reactive<SceneOptions<T>['defaultProps']>;
+  data: T extends SceneSetup<infer P, infer D> ? () => D : () => LooseObject;
+  //@ts-ignore
+  show: T extends SceneSetup<infer P, infer D> ? SceneShow<P, D> : T =
+    this.#show;
+  #options: SceneOptions<T>;
+  #showPromiseWithResolvers?: ReturnType<typeof promiseWithResolvers<null>>;
+  #listeners: { [K in SceneEventType]?: ((e: SceneEventMap[K]) => void)[] } =
+    {};
   constructor(
-    public app: App,
-    /**
-     * Setup function to create the scene
-     *
-     * @returns Update function to update the scene each show
-     */
-    setup: SceneSetup<P>,
-    public options: SceneOptions = {},
+    public readonly app: App,
+    setup: T,
+    public readonly defaultOptions: SceneOptions<T>,
   ) {
     super();
 
     // initialize
-    this.close();
-    this.update = setup(this);
     this.addCleanup(() => this.app.root.removeChild(this.root));
+    this.close();
+    this.#options = defaultOptions;
 
-    // add close event listener
-    const closeKeys =
-      typeof options.close_on === 'undefined'
-        ? []
-        : typeof options.close_on === 'string'
-          ? [options.close_on]
-          : options.close_on;
-    const closeFn = this.close.bind(this);
-    for (const key of closeKeys) {
-      //@ts-ignore
-      this.useEventListener(this.root, key, closeFn);
-    }
+    // setup
+    this.props = reactive(defaultOptions.defaultProps);
+    //@ts-ignore
+    const { element, data } = setup(this.props, this);
+    this.data = data ?? (() => ({}));
+
+    Array.isArray(element)
+      ? this.root.append(...element)
+      : this.root.append(element);
+    app.root.appendChild(this.root);
   }
-  /** Override config */
-  config(options: Partial<SceneOptions>) {
-    Object.assign(this.options, options);
+  config(patchOptions: Partial<SceneOptions<T>>) {
+    this.#options = { ...this.defaultOptions, ...patchOptions };
     return this;
   }
-  close() {
-    if (!this.#isShown) {
-      console.warn('Scene is already closed');
-      return;
-    }
-    this.#isShown = false;
-    this.root.style.transform = 'scale(0)';
-    this.#showPromiseWithResolvers?.resolve(this.data);
+  on<K extends SceneEventType>(
+    type: K,
+    listener: (e: SceneEventMap[K]) => void,
+  ) {
+    (this.#listeners[type] ??= [] as any[]).push(listener);
+    return this;
   }
-  /** Show the scene with parameters */
-  show(...e: P) {
-    if (this.#isShown) {
-      console.warn('Scene is already shown');
-      return this.data;
-    }
-    this.#isShown = true;
+  emit<K extends SceneEventType>(type: K, event: SceneEventMap[K]) {
+    const listeners = this.#listeners[type];
+    if (listeners) for (const listener of listeners) listener(event);
+  }
+  close() {
+    this.root.style.transform = 'scale(0)';
+    this.#showPromiseWithResolvers?.resolve(null);
+  }
+  async #show(patchProps?: Partial<LooseObject>) {
+    this.root.focus();
     this.root.style.transform = 'scale(1)';
     this.#showPromiseWithResolvers = promiseWithResolvers();
 
-    this.update(...e);
+    const { defaultProps, duration, close_on, frame_times } = this.#options;
+    Object.assign(this.props, defaultProps, patchProps);
+    this.emit('scene:show', null);
 
-    const frame_ms = this.app.data.frame_ms;
-    const duration = this.options.duration;
+    // add event listener
+    if (typeof close_on !== 'undefined') {
+      const close_ons = Array.isArray(close_on) ? close_on : [close_on];
+      for (const close_on of close_ons) {
+        this.on(close_on, () => this.close());
+      }
+    }
+    const eventTypes = Object.keys(this.#listeners) as SceneEventType[];
+    const hasSpecialType: [mouse: boolean, key: boolean] = [false, false];
+    for (const type of eventTypes) {
+      if (!hasSpecialType[0] && type.startsWith('mouse:')) {
+        hasSpecialType[0] = true;
+        this.on(
+          'scene:close',
+          on(this.root, 'mousedown', (e) =>
+            this.emit(buttonTypeMap[e.button] ?? 'mouse:unknown', e),
+          ),
+        );
+        continue;
+      }
+      if (!hasSpecialType[1] && type.startsWith('key:')) {
+        hasSpecialType[1] = true;
+        this.on(
+          'scene:close',
+          on(this.root, 'keydown', (e) => {
+            this.emit('key:any', e);
+            this.emit(`key:${e.key}`, e);
+          }),
+        );
+        continue;
+      }
+      if (!type.startsWith('scene:')) {
+        this.on(
+          'scene:close',
+          //@ts-ignore
+          on(this.root, type, (e) => this.emit(type, e)),
+        );
+      }
+    }
 
     // check duration
+    const frame_ms = this.app.data.frame_ms;
     if (
       process.env.NODE_ENV === 'development' &&
       typeof duration !== 'undefined'
@@ -97,9 +172,8 @@ export class Scene<P extends unknown[]> extends DisposableClass {
       }
     }
 
+    // render
     /**
-     * Render
-     *
      * ## Scene render logic
      *
      * ```text
@@ -130,36 +204,36 @@ export class Scene<P extends unknown[]> extends DisposableClass {
      *     if e + \delta < 0 then -e <= -e - \delta -> false
      * ```
      */
+    const showInfo = createShowInfo();
     const onFrame = (lastFrameTime: number) => {
-      this.data.frame_times.push(lastFrameTime);
+      frame_times && showInfo.frame_times.push(lastFrameTime);
 
-      if (typeof this.options.duration !== 'undefined') {
-        if (
-          lastFrameTime - this.data.start_time >=
-          this.options.duration - frame_ms * 1.5
-        ) {
-          // console.log(
-          //     'frame durations',
-          //     this.data.frame_times.reduce(
-          //         (acc, e, i, arr) => (i > 0 && acc.push(e - arr[i - 1]!), acc),
-          //     [] as number[],
-          //   ),
-          // );
-          this.close();
-          return;
-        }
+      if (
+        typeof duration !== 'undefined' &&
+        lastFrameTime - showInfo.start_time >= duration - frame_ms * 1.5
+      ) {
+        // console.log(
+        //   'frame durations',
+        //   showInfo.frame_times.reduce(
+        //     (acc, e, i, arr) => (i > 0 && acc.push(e - arr[i - 1]!), acc),
+        //     [] as number[],
+        //   ),
+        // );
+        this.close();
+        return;
       }
 
-      this.options.on_frame?.(lastFrameTime);
+      this.emit('scene:frame', lastFrameTime);
       window.requestAnimationFrame(onFrame);
     };
     window.requestAnimationFrame((lastFrameTime) => {
-      //@ts-ignore
-      this.data.start_time = lastFrameTime;
-      this.data.frame_times.length = 0;
+      showInfo.start_time = lastFrameTime;
       onFrame(lastFrameTime);
     });
 
-    return this.#showPromiseWithResolvers.promise;
+    await this.#showPromiseWithResolvers.promise;
+    this.emit('scene:close', null);
+    this.#options = this.defaultOptions;
+    return Object.assign(this.data(), showInfo);
   }
 }
