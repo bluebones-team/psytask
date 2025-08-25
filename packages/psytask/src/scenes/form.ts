@@ -200,8 +200,8 @@ export const Form = function <T extends Record<string, FieldRecord>>(
       },
       formEl,
     ),
-    data: () =>
-      fields.reduce(
+    data() {
+      const data = fields.reduce(
         (acc, { id, data }) => ({ ...acc, [id]: data().value }),
         {} as {
           [K in keyof T]: (typeof fieldMap)[T[K]['type']] extends SceneSetup<
@@ -211,6 +211,9 @@ export const Form = function <T extends Record<string, FieldRecord>>(
             ? D['value']
             : never;
         },
-      ),
+      );
+      console.log('Form', data);
+      return data;
+    },
   };
 } satisfies SceneSetup;

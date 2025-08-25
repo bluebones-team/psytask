@@ -19,22 +19,19 @@ export const TextStim = function (
 ) {
   const el = h('div', {
     className: 'psytask-center',
-    style: { whiteSpace: 'pre-line', lineHeight: 1.5 },
+    style: { whiteSpace: 'pre-line', lineHeight: 1.5, padding: '2rem' },
   });
-  const keys = Object.keys(props);
 
   effect(() => {
-    const children = props.children ?? 'no text';
+    const children = props.children ?? 'Hello Word';
     Array.isArray(children)
       ? el.replaceChildren(...children)
       : el.replaceChildren(children);
   });
-  effect(() => {
-    for (const key of keys)
-      if (key !== 'children')
-        //@ts-ignore
-        el.style[key] = props[key];
-  });
+  for (const key of Object.keys(props))
+    if (key !== 'children')
+      //@ts-ignore
+      effect(() => (el.style[key] = props[key]));
   return { element: el };
 } satisfies SceneSetup;
 
@@ -60,9 +57,7 @@ export const ImageStim = function (
     } else props.draw(ctx);
   });
 
-  return {
-    element: h('div', { className: 'psytask-center' }, el),
-  };
+  return { element: el };
 } satisfies SceneSetup;
 
 type WaveFunction = (x: number) => number;
@@ -490,7 +485,6 @@ export const VirtualChinrest = function (
   // logic
   const sKey = 'psytask:VirtualChinrest:store';
   const textProps: Parameters<typeof TextStim>[0] = reactive({});
-  const { element } = TextStim(textProps);
   effect(() => {
     const { usePreviousData } = props;
     const sValue = localStorage.getItem(sKey);
@@ -501,7 +495,7 @@ export const VirtualChinrest = function (
     }
     if (usePreviousData === true) {
       Object.assign(state, JSON.parse(sValue));
-      self.close();
+      self.on('scene:show', () => self.close());
       return;
     }
     // show confirmation
@@ -536,15 +530,17 @@ export const VirtualChinrest = function (
   });
 
   return {
-    element,
+    element: TextStim(textProps).element,
     data() {
       console.log('VirtualChinrest', { ...state });
       const { pix_per_cm, distance_cm } = state;
-      const deg2pix = (deg: number) =>
+      const deg2cm = (deg: number) =>
         2 * distance_cm * Math.tan((deg / 2) * (Math.PI / 180));
+      const deg2pix = (deg: number) => deg2cm(deg) * pix_per_cm;
       return {
         pix_per_cm,
         distance_cm,
+        deg2cm,
         deg2pix,
         deg2csspix: (deg: number) => deg2pix(deg) / self.app.data.dpr,
       };

@@ -1,4 +1,4 @@
-import type { Data } from '../types';
+import type { Data, Primitive } from '../types';
 import { _Disposable, h, on } from './util';
 
 // stringifiers
@@ -9,21 +9,30 @@ export abstract class DataStringifier {
   /** Create the final chunk, and append it to the collector */
   abstract final(): string;
 }
+/** @see https://www.rfc-editor.org/rfc/rfc4180 */
 export class CSVStringifier extends DataStringifier {
   keys: string[] = [];
+  normalize(value: Primitive) {
+    if (value == null) return '';
+    value = '' + value;
+    return /[,"\n\r]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+  }
   transform(data: Data) {
     let chunk = '';
-    if (this.keys.length === 0) {
+    let len = this.keys.length;
+    if (len === 0) {
       this.keys = Object.keys(data);
+      len = this.keys.length;
       chunk = this.keys.reduce(
-        (acc, key) => acc + (key.includes(',') ? `"${key}"` : key) + ',',
+        (acc, key, i) => acc + this.normalize(key) + (i < len - 1 ? ',' : ''),
         '',
       );
     }
-    chunk += this.keys.reduce((acc, key) => {
-      const value = data[key];
-      return acc + (('' + value).includes(',') ? `"${value}"` : value) + ',';
-    }, '\n');
+    chunk += this.keys.reduce(
+      (acc, key, i) =>
+        acc + this.normalize(data[key]) + (i < len - 1 ? ',' : ''),
+      '\n',
+    );
     this.value += chunk;
     return chunk;
   }
@@ -38,8 +47,9 @@ export class JSONStringifier extends DataStringifier {
     return chunk;
   }
   final() {
-    this.value += ']';
-    return ']';
+    const chunk = this.value === '' ? '[]' : ']';
+    this.value += chunk;
+    return chunk;
   }
 }
 

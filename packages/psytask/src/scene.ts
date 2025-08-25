@@ -1,4 +1,4 @@
-import type { LooseObject, Merge } from '../types';
+import type { DeepReadonly, LooseObject, Merge } from '../types';
 import type { App } from './app';
 import { reactive, type Reactive } from './reactive';
 import { _Disposable, h, on, promiseWithResolvers } from './util';
@@ -13,7 +13,7 @@ export type SceneSetup<
 > = (
   props: Reactive<P>,
   self: Scene<never>,
-) => { element: HTMLElement | HTMLElement[]; data?: () => D };
+) => { element: Node | Node[]; data?: () => D };
 type SceneShow<
   P extends LooseObject = any,
   D extends LooseObject = LooseObject,
@@ -28,7 +28,7 @@ type SceneEventMap = {
   [K in `mouse:${'left' | 'middle' | 'right' | 'unknown'}`]: MouseEvent;
 } & { [K in `key:${string}`]: KeyboardEvent } & HTMLElementEventMap;
 type SceneEventType = keyof SceneEventMap;
-export type SceneOptions<T extends SceneFunction> = {
+export type SceneOptions<T extends SceneFunction> = DeepReadonly<{
   defaultProps: T extends SceneSetup<infer P> ? P : LooseObject;
   /** @unit ms */
   duration?: number;
@@ -39,7 +39,7 @@ export type SceneOptions<T extends SceneFunction> = {
   close_on?: SceneEventType | SceneEventType[];
   /** Whether to log frame times */
   frame_times?: boolean;
-};
+}>;
 
 const buttonTypeMap = ['mouse:left', 'mouse:middle', 'mouse:right'] as const;
 /** Just for type infer, do nothing in runtime. */
@@ -62,10 +62,11 @@ export class Scene<T extends SceneFunction> extends _Disposable {
   //@ts-ignore
   show: T extends SceneSetup<infer P, infer D> ? SceneShow<P, D> : T =
     this.#show;
-  #options: SceneOptions<T>;
+  private options: SceneOptions<T>;
+  private listeners: {
+    [K in SceneEventType]?: Set<(e: SceneEventMap[K]) => void>;
+  } = {};
   #showPromiseWithResolvers?: ReturnType<typeof promiseWithResolvers<null>>;
-  #listeners: { [K in SceneEventType]?: ((e: SceneEventMap[K]) => void)[] } =
-    {};
   constructor(
     public readonly app: App,
     setup: T,
@@ -76,10 +77,10 @@ export class Scene<T extends SceneFunction> extends _Disposable {
     // initialize
     this.addCleanup(() => this.app.root.removeChild(this.root));
     this.close();
-    this.#options = defaultOptions;
+    this.options = defaultOptions;
 
     // setup
-    this.props = reactive(defaultOptions.defaultProps);
+    this.props = reactive({ ...defaultOptions.defaultProps });
     //@ts-ignore
     const { element, data } = setup(this.props, this);
     this.data = data ?? (() => ({}));
@@ -90,18 +91,43 @@ export class Scene<T extends SceneFunction> extends _Disposable {
     app.root.appendChild(this.root);
   }
   config(patchOptions: Partial<SceneOptions<T>>) {
-    this.#options = { ...this.defaultOptions, ...patchOptions };
+    this.options = { ...this.defaultOptions, ...patchOptions };
     return this;
   }
+  /** Add event listener */
   on<K extends SceneEventType>(
     type: K,
     listener: (e: SceneEventMap[K]) => void,
   ) {
-    (this.#listeners[type] ??= [] as any[]).push(listener);
+    (this.listeners[type] ??= new Set<any>()).add(listener);
     return this;
   }
+  /** Remove event listener */
+  off<K extends SceneEventType>(
+    type: K,
+    listener: (e: SceneEventMap[K]) => void,
+  ) {
+    this.listeners[type]?.delete(listener);
+    return this;
+  }
+  /** Add one-time event listener */
+  once<K extends SceneEventType>(
+    type: K,
+    listener: (e: SceneEventMap[K]) => void,
+  ) {
+    const wrapper = (e: SceneEventMap[K]) => {
+      try {
+        listener(e);
+      } finally {
+        this.off(type, wrapper);
+      }
+    };
+    this.on(type, wrapper);
+    return this;
+  }
+  /** Emit event listeners */
   emit<K extends SceneEventType>(type: K, event: SceneEventMap[K]) {
-    const listeners = this.#listeners[type];
+    const listeners = this.listeners[type];
     if (listeners) for (const listener of listeners) listener(event);
   }
   close() {
@@ -113,23 +139,29 @@ export class Scene<T extends SceneFunction> extends _Disposable {
     this.root.style.transform = 'scale(1)';
     this.#showPromiseWithResolvers = promiseWithResolvers();
 
-    const { defaultProps, duration, close_on, frame_times } = this.#options;
+    const { defaultProps, duration, close_on, frame_times } = this.options;
     Object.assign(this.props, defaultProps, patchProps);
+    if (process.env.NODE_ENV === 'development') {
+      //@ts-ignore
+      window['s'] = this;
+    }
     this.emit('scene:show', null);
 
     // add event listener
     if (typeof close_on !== 'undefined') {
       const close_ons = Array.isArray(close_on) ? close_on : [close_on];
+      const close = () => this.close();
       for (const close_on of close_ons) {
-        this.on(close_on, () => this.close());
+        this.on(close_on, close);
+        this.once('scene:close', () => this.off(close_on, close));
       }
     }
-    const eventTypes = Object.keys(this.#listeners) as SceneEventType[];
+    const eventTypes = Object.keys(this.listeners) as SceneEventType[];
     const hasSpecialType: [mouse: boolean, key: boolean] = [false, false];
     for (const type of eventTypes) {
       if (!hasSpecialType[0] && type.startsWith('mouse:')) {
         hasSpecialType[0] = true;
-        this.on(
+        this.once(
           'scene:close',
           on(this.root, 'mousedown', (e) =>
             this.emit(buttonTypeMap[e.button] ?? 'mouse:unknown', e),
@@ -139,17 +171,14 @@ export class Scene<T extends SceneFunction> extends _Disposable {
       }
       if (!hasSpecialType[1] && type.startsWith('key:')) {
         hasSpecialType[1] = true;
-        this.on(
+        this.once(
           'scene:close',
-          on(this.root, 'keydown', (e) => {
-            this.emit('key:any', e);
-            this.emit(`key:${e.key}`, e);
-          }),
+          on(this.root, 'keydown', (e) => this.emit(`key:${e.key}`, e)),
         );
         continue;
       }
       if (!type.startsWith('scene:')) {
-        this.on(
+        this.once(
           'scene:close',
           //@ts-ignore
           on(this.root, type, (e) => this.emit(type, e)),
@@ -233,7 +262,7 @@ export class Scene<T extends SceneFunction> extends _Disposable {
 
     await this.#showPromiseWithResolvers.promise;
     this.emit('scene:close', null);
-    this.#options = this.defaultOptions;
+    this.options = this.defaultOptions;
     return Object.assign(this.data(), showInfo);
   }
 }

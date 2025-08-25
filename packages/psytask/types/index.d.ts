@@ -18,3 +18,6 @@ export type EventType<
   T extends EventTarget,
   U = keyof T,
 > = U extends `on${infer K}` ? K : never;
+export type DeepReadonly<T> = {
+  readonly [K in keyof T]: T[K] extends object ? DeepReadonly<T[K]> : T[K];
+};

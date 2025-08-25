@@ -1,3 +1,4 @@
+import type { MaybePromise } from '../types';
 import { effect, reactive } from './reactive';
 import { Scene, type SceneFunction, type SceneOptions } from './scene';
 import { TextStim } from './scenes';
@@ -95,46 +96,63 @@ export class App extends _Disposable {
     });
   }
   /** Load resources to RAM */
-  async load(urls: string[]) {
+  async load<const T extends readonly string[], D = Blob>(
+    urls: T,
+    convertor?: (blob: Blob, url: string) => MaybePromise<D>,
+  ) {
     const container = this.root.appendChild(
-      h('div', { className: 'psytask-center' }),
+      h('div', { className: 'psytask-center', style: { lineHeight: 1.5 } }),
     );
 
     const tasks = urls.map(async (url) => {
-      const el = container.appendChild(h('p', { title: url }));
+      const link = h('a', { href: url, target: '_blank' }, url);
+      const el = container.appendChild(
+        h('p', { title: url }, ['Fetch ', link, '...']),
+      );
 
-      const res = await fetch(url);
-      if (res.body == null) {
-        el.style.color = 'red';
-        el.textContent = `Failed to load`;
-        throw new Error(el.textContent + ': ' + url);
+      try {
+        const res = await fetch(url);
+        if (res.body == null) {
+          throw new Error('no response body');
+        }
+
+        // no progress
+        const totalStr = res.headers.get('Content-Length');
+        if (totalStr == null) {
+          console.warn(`Failed to get content length for ${url}`);
+          el.replaceChildren('Loading', link, '...');
+          return res.blob();
+        }
+        const total = +totalStr;
+
+        // show progress
+        const reader = res.body.getReader();
+        const chunks = [];
+        for (let loaded = 0; ; ) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          loaded += value.length;
+          el.replaceChildren(
+            'Loading',
+            link,
+            `... ${((loaded / total) * 100).toFixed(2)}%`,
+          );
+          chunks.push(value);
+        }
+
+        const blob = new Blob(chunks);
+        return convertor ? convertor(blob, url) : blob;
+      } catch (err) {
+        el.style.color = '#000';
+        el.replaceChildren('Failed to load', link, `: ${err}`);
+        // wait forever
+        await new Promise(() => {});
       }
-
-      // no progress
-      const totalStr = res.headers.get('Content-Length');
-      if (totalStr == null) {
-        el.textContent = `Loading...`;
-        return res.blob();
-      }
-      const total = +totalStr;
-
-      // show progress
-      const reader = res.body.getReader();
-      const chunks = [];
-      for (let loaded = 0; ; ) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        loaded += value.length;
-        el.textContent = `Loading...` + ((loaded / total) * 100).toFixed(2);
-        chunks.push(value);
-      }
-
-      return new Blob(chunks);
     });
 
     const datas = await Promise.all(tasks);
     this.root.removeChild(container);
-    return datas;
+    return datas as { [K in keyof T]: D };
   }
   /** Create a scene */
   scene<T extends SceneFunction>(

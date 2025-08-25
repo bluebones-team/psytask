@@ -1,22 +1,26 @@
 import type { Properties as CSSProperties } from 'csstype';
 import type { EventType, LooseObject, Merge } from '../types';
 
-/** Creates a new HTML element quickly and easily */
-export function h<K extends keyof HTMLElementTagNameMap>(
-  tagName: K,
+const modifyElement = <T extends HTMLElement | SVGElement>(
+  el: T,
   props?: Partial<
-    Merge<HTMLElementTagNameMap[K], { style?: CSSProperties }>
+    Merge<T, { style?: CSSProperties; attrs?: LooseObject }>
   > | null,
   children?: Node | string | (Node | string)[] | null,
-) {
-  const el = document.createElement(tagName);
+) => {
   if (props != null) {
     for (const key in props) {
       if (hasOwn(props, key)) {
         if (key === 'style') {
-          for (const styleKey in props.style!) {
-            if (hasOwn(props.style, styleKey)) {
-              el.style[styleKey] = props.style[styleKey]!;
+          for (const k in props.style!) {
+            if (hasOwn(props.style, k)) {
+              el.style[k] = props.style[k]!;
+            }
+          }
+        } else if (key === 'attrs') {
+          for (const k in props.attrs!) {
+            if (hasOwn(props.attrs, k)) {
+              el.setAttribute(k, props.attrs[k]);
             }
           }
         } else {
@@ -37,7 +41,31 @@ export function h<K extends keyof HTMLElementTagNameMap>(
     }
   }
   return el;
-}
+};
+/** Creates HTML element quickly and easily */
+export const h = <K extends keyof HTMLElementTagNameMap>(
+  tagName: K,
+  ...e: Parameters<typeof modifyElement<HTMLElementTagNameMap[K]>> extends [
+    infer L,
+    ...infer R,
+  ]
+    ? R
+    : never
+) => modifyElement(document.createElement(tagName), ...e);
+/** Create SVG element */
+export const svg = <K extends keyof SVGElementTagNameMap>(
+  tagName: K,
+  ...e: Parameters<typeof modifyElement<SVGElementTagNameMap[K]>> extends [
+    infer L,
+    ...infer R,
+  ]
+    ? R
+    : never
+) =>
+  modifyElement(
+    document.createElementNS('http://www.w3.org/2000/svg', tagName),
+    ...e,
+  );
 export function hasOwn<T extends LooseObject, K extends PropertyKey>(
   obj: T,
   key: K,
