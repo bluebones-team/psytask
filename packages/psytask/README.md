@@ -12,9 +12,17 @@ Compare to jsPsych, Psytask has:
 - Higher time precision, try [online test](https://bluebones-team.github.io/psytask) on your browser.
 - Smaller bundle size, Faster loading speed.
 
+**You can experience it online via [CodeSandbox](https://githubbox.com/bluebones-team/psytask/tree/main/packages/create-psytask/template/bun-ts).**
+
 ## Install
 
-via NPM (Recommand):
+via [create-psytask](https://github.com/bluebones-team/psytask/tree/main/packages/create-psytask):
+
+```bash
+npm create psytask
+```
+
+via NPM:
 
 ```bash
 npm i psytask

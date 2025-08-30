@@ -1,5 +1,5 @@
 {
-  "name": "bun-ts",
+  "name": "bun-js",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,5 @@
   },
   "dependencies": {
     "psytask": "^1"
-  },
-  "devDependencies": {
-    "typescript": "^5"
   }
 }
